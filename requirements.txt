@@ -1,2 +1,6 @@
 streamlit
 openai
+streamlink
+transformers
+PIL
+cv2
