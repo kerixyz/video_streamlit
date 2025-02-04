@@ -3,4 +3,4 @@ openai
 streamlink
 transformers
 pillow
-cv2
+opencv-python
