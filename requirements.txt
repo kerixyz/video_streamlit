@@ -4,3 +4,5 @@ streamlink
 transformers
 pillow
 opencv-python
+time
+requests

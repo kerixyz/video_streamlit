@@ -1,127 +1,95 @@
-import streamlit as st
-import streamlink
-import cv2
+from IPython.display import display, Image, Audio
+
+import cv2  # We're using OpenCV to read video, to install !pip install opencv-python
+import base64
+import time
+from openai import OpenAI
 import os
-from PIL import Image
-from transformers import pipeline
+import requests
 
-# Function to download a Twitch video using streamlink
-def download_twitch_video(twitch_url, output_dir='temp_videos'):
-    """
-    Download a Twitch video using streamlink.
-    
-    Args:
-        twitch_url (str): URL of the Twitch video
-        output_dir (str): Directory to save the downloaded video
-    
-    Returns:
-        str: Path to the downloaded video file
-    """
-    try:
-        # Create output directory if it doesn't exist
-        os.makedirs(output_dir, exist_ok=True)
-        
-        # Get available streams
-        streams = streamlink.streams(twitch_url)
-        
-        if not streams:
-            raise ValueError("No streams found for the given URL")
-        
-        # Select the best quality stream
-        best_stream = streams['best']
-        
-        # Generate a filename
-        filename = os.path.join(output_dir, f"twitch_video_{hash(twitch_url)}.mp4")
-        
-        # Download the stream
-        with open(filename, 'wb') as f:
-            for chunk in best_stream.open():
-                f.write(chunk)
-        
-        return filename
-    
-    except Exception as e:
-        st.error(f"Error downloading Twitch video: {e}")
-        return None
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as env var>"))
 
-# Function to extract frames from a video at specified intervals
-def extract_frames(video_path, interval=30):
-    """
-    Extract frames from a video at specified intervals.
-    
-    Args:
-        video_path (str): Path to the video file
-        interval (int): Number of frames to skip between extractions
-    
-    Returns:
-        list: List of extracted frames as PIL Images
-    """
-    frames = []
-    cap = cv2.VideoCapture(video_path)
-    frame_count = 0
+video = cv2.VideoCapture("data/bison.mp4")
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        if frame_count % interval == 0:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(Image.fromarray(frame_rgb))
-        
-        frame_count += 1
+base64Frames = []
+while video.isOpened():
+    success, frame = video.read()
+    if not success:
+        break
+    _, buffer = cv2.imencode(".jpg", frame)
+    base64Frames.append(base64.b64encode(buffer).decode("utf-8"))
 
-    cap.release()
-    return frames
+video.release()
+print(len(base64Frames), "frames read.")
+
 
 # Function to analyze a single frame using a vision-language model
 def analyze_frame(frame, model):
-    """
-    Analyze a single frame using a vision-language model.
     
-    Args:
-        frame (PIL.Image): The input image/frame
-        model: The vision-language model pipeline
-    
-    Returns:
-        str: The generated description or analysis of the frame
-    """
+    PROMPT_MESSAGES = [
+    {
+        "role": "user",
+        "content": [
+            "These are frames from a video that I want to upload. Generate a compelling description that I can upload along with the video.",
+            *map(lambda x: {"image": x, "resize": 768}, base64Frames[0::50]),
+        ],
+    },
+    ]
+    params = {
+        "model": "gpt-4o",
+        "messages": PROMPT_MESSAGES,
+        "max_tokens": 200,
+    }
+
+    result = client.chat.completions.create(**params)
+    print(result.choices[0].message.content)
     return model(frame)['generated_text']
 
 # Main Streamlit app function
 def main():
     st.title("Twitch Video Analysis App")
     
-    # Input for Twitch video URL
-    twitch_url = st.text_input("Enter Twitch Video URL:")
+    # Upload video file
+    uploaded_file = st.file_uploader("Upload a video file", type=["mp4", "avi", "mov"])
     
-    if st.button("Analyze Video"):
-        if not twitch_url:
-            st.error("Please provide a Twitch video URL")
-            return
+    if uploaded_file is not None:
+        # Save uploaded video to a temporary file
+        temp_video_path = "temp_video.mp4"
+        with open(temp_video_path, "wb") as f:
+            f.write(uploaded_file.read())
         
-        # Download the video
-        st.write("Downloading video...")
-        video_path = download_twitch_video(twitch_url)
+        # Load video using OpenCV
+        video = cv2.VideoCapture(temp_video_path)
+        base64_frames = []
         
-        if video_path:
-            st.success(f"Video downloaded successfully: {video_path}")
+        # Process video frames
+        while video.isOpened():
+            success, frame = video.read()
+            if not success:
+                break
+            _, buffer = cv2.imencode(".jpg", frame)
+            base64_frames.append(base64.b64encode(buffer).decode("utf-8"))
+        
+        video.release()
+        os.remove(temp_video_path)  # Clean up temporary file
+        
+        st.write(f"Video uploaded successfully! Total frames: {len(base64_frames)}")
+        
+        # Select a frame to analyze
+        frame_index = st.slider("Select a frame to analyze", 0, len(base64_frames) - 1, step=50)
+        
+        if st.button("Analyze Frame"):
+            # Display the selected frame
+            frame_data = base64.b64decode(base64_frames[frame_index])
+            frame_image = Image.open(io.BytesIO(frame_data))
+            st.image(frame_image, caption=f"Frame {frame_index}")
             
-            # Extract frames
-            st.write("Extracting frames...")
-            frames = extract_frames(video_path, interval=30)
-            st.write(f"Extracted {len(frames)} frames.")
+            # Analyze the selected frame
+            model = pipeline("image-to-text")  # Replace with your specific vision-language model
+            description = analyze_frame(frame_image, model)
             
-            # Load vision-language model
-            st.write("Loading AI model...")
-            vl_model = pipeline("image-to-text", model="nlpconnect/vit-gpt2-image-captioning")
-            
-            # Analyze frames
-            st.write("Analyzing frames...")
-            for i, frame in enumerate(frames):
-                st.image(frame, caption=f"Frame {i + 1}", use_column_width=True)
-                analysis = analyze_frame(frame, vl_model)
-                st.write(f"Analysis for Frame {i + 1}: {analysis}")
-
+            st.write("Generated Description:")
+            st.write(description)
+   
 if __name__ == "__main__":
     main()
