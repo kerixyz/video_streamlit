@@ -3,6 +3,6 @@ openai
 streamlink
 transformers
 pillow
-opencv-python
+opencv-python-headless
 time
 requests
