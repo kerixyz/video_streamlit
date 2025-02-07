@@ -1,6 +1,5 @@
 streamlit
 openai
 pillow
-opencv-python-headless
-time
+opencv-python
 requests
