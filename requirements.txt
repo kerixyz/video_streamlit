@@ -1,7 +1,5 @@
 streamlit
 openai
-streamlink
-transformers
 pillow
 opencv-python-headless
 time
